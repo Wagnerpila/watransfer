@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# nunca versionar dados de clientes
+*.crypt12
+*.crypt14
+*.crypt15
+*.db
+*.sqlite

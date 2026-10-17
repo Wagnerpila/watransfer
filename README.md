@@ -4,9 +4,19 @@ Backup e leitura do **WhatsApp Business** de celulares Android e iPhone, no Wind
 Esta é a etapa 1 (backup + visualização/exportação). A conversão Android ↔ iPhone
 e a restauração no aparelho de destino são as próximas etapas.
 
+## Instalar em outro computador (Windows 10/11)
+
+1. Instale o **Python 3.11 ou superior** (python.org), marcando **"Add python.exe to PATH"**.
+2. Baixe o projeto: `git clone https://github.com/Wagnerpila/watransfer.git`
+   (ou, no GitHub, **Code → Download ZIP** e extraia).
+3. Para **iPhone**: instale o app **Apple Devices** (Microsoft Store) ou o iTunes.
+4. Para **Android**: instale o [Android Platform Tools](https://developer.android.com/tools/releases/platform-tools)
+   (contém o `adb`) e coloque a pasta no PATH, ou defina `WATRANSFER_ADB` com o caminho do `adb.exe`.
+
 ## Como abrir
 
-Dê dois cliques em `iniciar.bat`. Na primeira vez ele cria o ambiente Python e instala as dependências.
+Dê dois cliques em `iniciar.bat`. Na primeira vez ele cria o ambiente Python e instala as dependências
+(precisa de internet; leva alguns minutos). Se a instalação for interrompida, basta rodar de novo.
 
 Os backups ficam em `Documentos\WATransfer\backups` (ou na pasta definida em `WATRANSFER_HOME`).
 

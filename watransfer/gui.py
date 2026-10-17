@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
+import time
 import traceback
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit,
-    QPushButton, QSplitter, QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
+    QProgressBar, QPushButton, QSplitter, QTabWidget, QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from . import __version__, android, export, ios, store, workflows
@@ -25,6 +27,16 @@ HELP_ANDROID = (
     "<li>Toque em <b>Fazer backup</b> e aguarde terminar.</li>"
     "<li>Ative as Opções do desenvolvedor e a <b>Depuração USB</b>, conecte o cabo e aceite o aviso.</li></ol>"
 )
+_PERCENT = re.compile(r"Progresso do backup: (\d+)%")
+_COUNT = re.compile(r"^\s*(\d+)/(\d+)\s*$")
+
+
+def _fmt_secs(secs: float) -> str:
+    secs = int(secs)
+    h, rest = divmod(secs, 3600)
+    return f"{h}:{rest // 60:02d}:{rest % 60:02d}" if h else f"{rest // 60:02d}:{rest % 60:02d}"
+
+
 HELP_IOS = (
     "<b>Antes de começar, com o iPhone:</b><ol>"
     "<li>Instale o app <b>Apple Devices</b> (ou iTunes) no Windows para ter o driver USB.</li>"
@@ -72,14 +84,77 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self.log_box)
         splitter.setSizes([600, 160])
         self.setCentralWidget(splitter)
+        self._status_bar()
 
         self.refresh_android()
         self.refresh_ios()
         self.refresh_stored()
 
+    # ------------------------------------------------------------ barra de status
+    def _status_bar(self):
+        bar = self.statusBar()
+        self.status_text = QLabel("Pronto.")
+        self.status_progress = QProgressBar(maximumWidth=320, minimumWidth=220, textVisible=True)
+        self.status_progress.hide()
+        self.status_time = QLabel()
+        bar.addWidget(self.status_text, 1)
+        bar.addPermanentWidget(self.status_progress)
+        bar.addPermanentWidget(self.status_time)
+        self._task_start: float | None = None
+        self._task_percent: float | None = None
+        self._clock = QTimer(self, interval=1000)
+        self._clock.timeout.connect(self._tick)
+
+    def _task_started(self):
+        self._task_start, self._task_percent = time.monotonic(), None
+        self.status_text.setText("Iniciando…")
+        self.status_progress.setRange(0, 0)  # animação "ocupado" até haver porcentagem
+        self.status_progress.show()
+        self._clock.start()
+        self._tick()
+
+    def _task_finished(self, ok: bool):
+        self._clock.stop()
+        elapsed = _fmt_secs(time.monotonic() - self._task_start) if self._task_start else ""
+        self._task_start = None
+        self.status_progress.hide()
+        self.status_text.setText(("✔ Concluído" if ok else "✖ Falhou — veja o log") + f" em {elapsed}.")
+        self.status_time.clear()
+
+    def _set_progress(self, value: float, maximum: float = 100):
+        self._task_percent = 100 * value / maximum if maximum else None
+        self.status_progress.setRange(0, int(maximum))
+        self.status_progress.setValue(int(value))
+        self._tick()
+
+    def _tick(self):
+        if self._task_start is None:
+            return
+        elapsed = time.monotonic() - self._task_start
+        text = f"Decorrido {_fmt_secs(elapsed)}"
+        p = self._task_percent
+        if p and 1 <= p < 100:
+            text += f" · restante ≈ {_fmt_secs(elapsed * (100 - p) / p)}"
+        self.status_time.setText(text)
+
+    def _update_status(self, text: str):
+        if self._task_start is None or "\n" in text or not text.strip():
+            return
+        if m := _PERCENT.search(text):
+            self._set_progress(float(m.group(1)))
+            self.status_text.setText(f"Backup do iPhone: {m.group(1)}%")
+        elif m := _COUNT.match(text):
+            self._set_progress(float(m.group(1)), float(m.group(2)))
+            self.status_text.setText(f"Extraindo arquivos: {m.group(1)} de {m.group(2)}")
+        else:
+            # remove prefixo de data/host/módulo das mensagens de log do pymobiledevice3
+            clean = re.sub(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d \S+ \S+\[\d+\] \w+ ", "", text.strip())
+            self.status_text.setText(clean[:150])
+
     # ------------------------------------------------------------ helpers
     def log(self, text: str):
         self.log_box.appendPlainText(text)
+        self._update_status(text)
 
     def run_task(self, buttons: list[QPushButton], fn, *args, on_done=None, **kwargs):
         for b in buttons:
@@ -88,20 +163,22 @@ class MainWindow(QMainWindow):
         worker.moveToThread(thread)
         thread.started.connect(worker.run)
         worker.log.connect(self.log)
+        self._task_started()
 
-        def finish():
+        def finish(success: bool):
             for b in buttons:
                 b.setEnabled(True)
             thread.quit()
+            self._task_finished(success)
 
         def ok(result):
-            finish()
+            finish(True)
             self.refresh_stored()
             if on_done:
                 on_done(result)
 
         def fail(message):
-            finish()
+            finish(False)
             QMessageBox.critical(self, "Erro", message)
 
         worker.done.connect(ok)
